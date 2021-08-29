@@ -1,0 +1,86 @@
+/* grainc-flags --no-gc */
+/**
+ * @module Utilities for working with UInt256/UInt128 values (since Grain does not yet natively support them)
+ *
+ * This is not meant to be comprehensive; this is just the set of functionality
+ * needed for the WRC20 demo
+ */
+import Ethereum from "../lib/ethereum/ewasm"
+import Bytes from "bytes"
+import Int64 from "int64"
+
+
+export let leftPadBytes = (bytes, length) => {
+  if (Bytes.length(bytes) >= length) {
+    bytes
+  } else {
+    let ret = Bytes.make(length)
+    let oldlen = Bytes.length(bytes)
+    let delta = length - oldlen
+    Bytes.resize(delta, 0, bytes)
+  }
+}
+
+
+export let promoteInt64ToInt256 = (value) => {
+  let retBytes = Bytes.make(32)
+  Bytes.fill(0l, retBytes)
+  // little-endian input & output
+  Bytes.setInt64(0, value, retBytes)
+  Ethereum.makeUInt256(retBytes)
+}
+
+export let int256Lt = (a, b) => {
+  let aBytes = Ethereum.getUInt256Bytes(a)
+  let bBytes = Ethereum.getUInt256Bytes(b)
+  let mut res = false
+  for (let mut i = 3; i >= 0; i -= 1) {
+    let aPiece = Bytes.getInt64(i * 8, aBytes)
+    let bPiece = Bytes.getInt64(i * 8, bBytes)
+    if (Int64.ltU(aPiece, bPiece)) {
+      res = true
+      break
+    }
+  }
+  res
+}
+
+export let int256Add = (a, b) => {
+  let aBytes = Ethereum.getUInt256Bytes(a)
+  let bBytes = Ethereum.getUInt256Bytes(b)
+  let retBytes = Bytes.make(32)
+  let mut res = false
+  let mut carry = 0L
+  for (let mut i = 3; i >= 0; i -= 1) {
+    let aPiece = Bytes.getInt64(i * 8, aBytes)
+    let bPiece = Bytes.getInt64(i * 8, bBytes)
+    let retPiece = Int64.add(Int64.add(aPiece, bPiece), carry)
+    if (Int64.ltU(retPiece, aPiece)) {
+      carry = 1L
+    } else {
+      carry = 0L
+    }
+    Bytes.setInt64(i * 8, retPiece, retBytes)
+  }
+  Ethereum.makeUInt256(retBytes)
+}
+
+export let int256Sub = (a, b) => {
+  let aBytes = Ethereum.getUInt256Bytes(a)
+  let bBytes = Ethereum.getUInt256Bytes(b)
+  let retBytes = Bytes.make(32)
+  let mut res = false
+  let mut carry = 0L
+  for (let mut i = 3; i >= 0; i -= 1) {
+    let aPiece = Bytes.getInt64(i * 8, aBytes)
+    let bPiece = Bytes.getInt64(i * 8, bBytes)
+    let retPiece = Int64.sub(Int64.sub(aPiece, bPiece), carry)
+    if (Int64.gtU(retPiece, aPiece)) {
+      carry = 1L
+    } else {
+      carry = 0L
+    }
+    Bytes.setInt64(i * 8, retPiece, retBytes)
+  }
+  Ethereum.makeUInt256(retBytes)
+}

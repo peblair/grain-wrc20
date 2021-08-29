@@ -1,0 +1,621 @@
+/* grainc-flags --no-gc */
+/**
+ * @module Grain-friendly wrappers for ewasm functions
+ */
+
+import Native from "./native"
+import DS from "runtime/dataStructures"
+import Conv from "runtime/unsafe/conv"
+import Memory from "runtime/unsafe/memory"
+import WasmI32 from "runtime/unsafe/wasmi32"
+import Bytes from "bytes"
+import I32 from "int32"
+
+// [TODO] add incRef/decRef calls in case people want to use GC
+// [TODO] ADT for Address?
+
+enum AccountAddress {
+  Address(Bytes) // must be 20 bytes!
+}
+
+let allocateAddressBytes = () => {
+  DS.allocateBytes(20n)
+}
+
+export let makeAddress = (b) => {
+  if (Bytes.length(b) != 20) {
+    fail("address can only be made with length-20 bytes")
+  }
+  Address(b)
+}
+
+export let getAddressBytes = (address) => {
+  match(address) {
+    Address(address) => address
+  }
+}
+
+let getAddressPtr = (address) => {
+  match(address) {
+    Address(address) => {
+      WasmI32.add(WasmI32.fromGrain(address), 8n)
+    }
+  }
+}
+
+export enum CallResult {
+  Success,
+  Failure,
+  Revert,
+  Unknown,
+}
+
+// datatypes not yet supported in Grain
+
+enum UInt128 {
+  UI128(Bytes)
+}
+
+let allocateUInt128Bytes = () => {
+  DS.allocateBytes(16n)
+}
+
+export let makeUInt128 = (b) => {
+  if (Bytes.length(b) != 16) {
+    fail("uint128 can only be made with length-16 bytes")
+  }
+  UI128(b)
+}
+
+export let getUInt128Bytes = (ui128) => {
+  match(ui128) {
+    UI128(ui128) => ui128
+  }
+}
+
+let getUInt128Ptr = (ui128) => {
+  match(ui128) {
+    UI128(ui128) => {
+      WasmI32.add(WasmI32.fromGrain(ui128), 8n)
+    }
+  }
+}
+
+enum UInt256 {
+  UI256(Bytes)
+}
+
+let allocateUInt256Bytes = () => {
+  DS.allocateBytes(32n)
+}
+
+export let makeUInt256 = (b) => {
+  if (Bytes.length(b) != 32) {
+    fail("uint128 can only be made with length-32 bytes")
+  }
+  UI256(b)
+}
+
+export let getUInt256Bytes = (ui256) => {
+  match(ui256) {
+    UI256(ui256) => ui256
+  }
+}
+
+let getUInt256Ptr = (ui256) => {
+  match(ui256) {
+    UI256(ui256) => {
+      WasmI32.add(WasmI32.fromGrain(ui256), 8n)
+    }
+  }
+}
+
+/**
+ * Subtracts an amount to the gas counter.
+ *
+ * @param amount: the amount to subtract from the gas counter
+ */
+export let useGas = (amount: Int64) => {
+  Native.useGas(Conv.fromInt64(amount))
+}
+
+/**
+ * Gets address of currently executing account.
+ *
+ * @returns the address
+ */
+export let getAddress = () => {
+  let retBytes = allocateAddressBytes()
+  Native.getAddress(WasmI32.add(retBytes, 8n))
+  Address(WasmI32.toGrain(retBytes): Bytes)
+}
+
+/**
+ * Gets balance of the given account.
+ *
+ * @param address: the account to look up
+ * @returns the balance
+ */
+export let getExternalBalance = (address: AccountAddress) => {
+  let ret = allocateUInt128Bytes()
+  Native.getExternalBalance(getAddressPtr(address), DS.rawInt32Ptr(ret))
+  UI128(WasmI32.toGrain(ret): Bytes)
+}
+
+/**
+ * Gets the hash of one of the 256 most recent complete blocks.
+ *
+ * @param number: which block to load
+ * @returns the block hash (32 bytes), if successful, or None
+ */
+export let getBlockHash = (number: Int64) => {
+  let ret = DS.allocateBytes(32n)
+  let resp = Native.getBlockHash(Conv.fromInt64(number), WasmI32.add(ret, 8n))
+  if (WasmI32.eqz(resp)) {
+    Some(WasmI32.toGrain(ret): Bytes)
+  } else {
+    Memory.free(ret)
+    None
+  }
+}
+
+/**
+ * Sends a message with arbitrary data to a given address path
+ *
+ * @param gas: the gas limit
+ * @param address: the address to send to
+ * @param value: the value to send
+ * @param data: the data to send
+ * @returns the result of the call
+ */
+export let call = (gas: Int64, address: AccountAddress, value: UInt128, data: Bytes) => {
+  let addressPtr = getAddressPtr(address)
+  let bytesPtr = WasmI32.fromGrain(data)
+  let bytesSize = WasmI32.load(bytesPtr, 4n)
+  let bytesPtr = WasmI32.add(bytesPtr, 8n)
+  let valuePtr = getUInt128Ptr(value)
+  let resp = Native.call(Conv.fromInt64(gas), addressPtr, valuePtr, bytesPtr, bytesSize)
+  if (WasmI32.eqz(resp)) {
+    Success
+  } else if (WasmI32.eq(resp, 1n)) {
+    Failure
+  } else if (WasmI32.eq(resp, 2n)) {
+    Revert
+  } else {
+    Unknown
+  }
+}
+
+/**
+ * Copies the input data in current environment to memory. This pertains to the
+ * input data passed with the message call instruction or transaction.
+ * This function will trap if `offset+length` is out of bounds.
+ *
+ * @param dest: The destination to write the input data to
+ * @param offset: The offset into the input data to begin reading from
+ * @param length: The amount of data to read
+ */
+export let callDataCopy = (dest: Bytes, offset: Int32, length: Int32) => {
+  Native.callDataCopy(WasmI32.add(WasmI32.fromGrain(dest), 8n), Conv.fromInt32(offset), Conv.fromInt32(length))
+}
+
+/**
+ * Get size of input data in current environment. This pertains to the input data passed with
+ * the message call instruction or transaction.
+ *
+ * @returns the size of input data
+ */
+export let getCallDataSize = () => {
+  Conv.toInt32(Native.getCallDataSize())
+}
+
+/**
+ * Gets the input data. This pertains to the input data passed with the message call instruction or transaction.
+ *
+ * @param offset: The offset into the input data to begin reading from
+ * @param limit: optional maximum size limit for the amount of bytes to return. By default, the maximum amount is returned.
+ * @returns the input data
+ */
+export let getCallData = (offset: Int32, limit: Option<Int32>) => {
+  let callSize = I32.sub(getCallDataSize(), offset)
+  let size = match(limit) {
+    Some(limit) => if (I32.gt(limit, callSize)) { callSize } else { limit },
+    None => callSize
+  }
+  let size = Conv.fromInt32(size)
+  let ret = DS.allocateBytes(size)
+  Native.callDataCopy(WasmI32.add(ret, 8n), Conv.fromInt32(offset), size)
+  WasmI32.toGrain(ret): Bytes
+}
+
+// helpers to avoid needing to work with Bytes:
+// [TODO] when we have optional args, it'd be great to make the `offset` optional
+//        (and increment as we read in data)
+
+/**
+ * Reads an Int256 from the input data. This pertains to the input data
+ * passed with the message call instruction or transaction.
+ *
+ * @param offset: The offset into the input data to begin reading from
+ * @returns the int256
+ */
+export let getCallDataInt256 = (offset: Int32) => {
+  UI256(getCallData(offset, Some(32l)))
+}
+
+/**
+ * Reads an Int128 from the input data. This pertains to the input data
+ * passed with the message call instruction or transaction.
+ *
+ * @param offset: The offset into the input data to begin reading from
+ * @returns the int128
+ */
+export let getCallDataInt128 = (offset: Int32) => {
+  UI128(getCallData(offset, Some(16l)))
+}
+
+/**
+ * Reads an address from the input data. This pertains to the input data
+ * passed with the message call instruction or transaction.
+ *
+ * @param offset: The offset into the input data to begin reading from
+ * @returns the address
+ */
+export let getCallDataAddress = (offset: Int32) => {
+  Address(getCallData(offset, Some(20l)))
+}
+
+/**
+ * Reads an Int64 from the input data. This pertains to the input data
+ * passed with the message call instruction or transaction.
+ *
+ * @param offset: The offset into the input data to begin reading from
+ * @returns the int64
+ */
+export let getCallDataInt64 = (offset: Int32) => {
+  Bytes.getInt64(0, getCallData(offset, Some(8l)))
+}
+
+/**
+ * Reads an Int32 from the input data. This pertains to the input data
+ * passed with the message call instruction or transaction.
+ *
+ * @param offset: The offset into the input data to begin reading from
+ * @returns the int32
+ */
+export let getCallDataInt32 = (offset: Int32) => {
+  Bytes.getInt32(0, getCallData(offset, Some(4l)))
+}
+
+/**
+ * Message-call into this account with an alternative account's code.
+ *
+ * @param gas: the gas limit
+ * @param address: the address to send to
+ * @param value: the value to send
+ * @param data: the data to send
+ * @returns the result of the call
+ */
+export let call = (gas: Int64, address: AccountAddress, value: UInt128, data: Bytes) => {
+  let addressPtr = getAddressPtr(address)
+  let bytesPtr = WasmI32.fromGrain(data)
+  let bytesSize = WasmI32.load(bytesPtr, 4n)
+  let bytesPtr = WasmI32.add(bytesPtr, 8n)
+  let valuePtr = getUInt128Ptr(value)
+  let resp = Native.callCode(Conv.fromInt64(gas), addressPtr, valuePtr, bytesPtr, bytesSize)
+  if (WasmI32.eqz(resp)) {
+    Success
+  } else if (WasmI32.eq(resp, 1n)) {
+    Failure
+  } else if (WasmI32.eq(resp, 2n)) {
+    Revert
+  } else {
+    Unknown
+  }
+}
+
+/**
+ * Message-call into this account with an alternative account’s code, but
+ * persisting the current values for sender and value.
+ *
+ * @param gas: the gas limit
+ * @param address: the address to send to
+ * @param data: the data to send
+ * @returns the result of the call
+ */
+export let callDelegate = (gas: Int64, address: AccountAddress, data: Bytes) => {
+  let addressPtr = getAddressPtr(address)
+  let bytesPtr = WasmI32.fromGrain(data)
+  let bytesSize = WasmI32.load(bytesPtr, 4n)
+  let bytesPtr = WasmI32.add(bytesPtr, 8n)
+  let resp = Native.callDelegate(Conv.fromInt64(gas), addressPtr, bytesPtr, bytesSize)
+  if (WasmI32.eqz(resp)) {
+    Success
+  } else if (WasmI32.eq(resp, 1n)) {
+    Failure
+  } else if (WasmI32.eq(resp, 2n)) {
+    Revert
+  } else {
+    Unknown
+  }
+}
+
+/**
+ * Sends a message with arbitrary data to a given address path,
+ * but disallow state modifications. This includes
+ * `log`, `create`, `selfdestruct` and `call` with a non-zero value.
+ *
+ * @param gas: the gas limit
+ * @param address: the address to send to
+ * @param value: the value to send
+ * @param data: the data to send
+ * @returns the result of the call
+ */
+export let callStatic = (gas: Int64, address: AccountAddress, data: Bytes) => {
+  let addressPtr = getAddressPtr(address)
+  let bytesPtr = WasmI32.fromGrain(data)
+  let bytesSize = WasmI32.load(bytesPtr, 4n)
+  let bytesPtr = WasmI32.add(bytesPtr, 8n)
+  let resp = Native.callStatic(Conv.fromInt64(gas), addressPtr, bytesPtr, bytesSize)
+  if (WasmI32.eqz(resp)) {
+    Success
+  } else if (WasmI32.eq(resp, 1n)) {
+    Failure
+  } else if (WasmI32.eq(resp, 2n)) {
+    Revert
+  } else {
+    Unknown
+  }
+}
+
+/**
+ * Store a 256-bit value in memory to persistent storage
+ *
+ * @param path: where to store the value
+ * @param value: the value to store
+ */
+export let storageStore = (path: Bytes, value: Bytes) => { // [TODO] why is this bytes32 and not uint256?
+  let pathPtr = WasmI32.fromGrain(path)
+  let valuePtr = WasmI32.fromGrain(value)
+  Native.storageStore(WasmI32.add(pathPtr, 8n), WasmI32.add(valuePtr, 8n))
+}
+
+/**
+ * Load a 256-bit value to memory from persistent storage
+ *
+ * @param path: where to load the value from
+ * @returns the stored value
+ */
+export let storageLoad = (path: Bytes) => {
+  let pathPtr = WasmI32.fromGrain(path)
+  let ret = DS.allocateBytes(32n)
+  Native.storageStore(WasmI32.add(pathPtr, 8n), WasmI32.add(ret, 8n))
+  WasmI32.toGrain(ret): Bytes
+}
+
+/**
+ * Gets caller address. This is the address of the account
+ * that is directly responsible for this execution.
+ *
+ * @result the caller address
+ */
+export let getCaller = () => {
+  let retBytes = allocateAddressBytes()
+  Native.getCaller(WasmI32.add(retBytes, 8n))
+  Address(WasmI32.toGrain(retBytes): Bytes)
+}
+
+/**
+ * Gets the deposited value by the instruction/transaction
+ * responsible for this execution.
+ *
+ * @result the deposited value
+ */
+export let getCallValue = () => {
+  let retBytes = allocateUInt128Bytes()
+  Native.getCallValue(WasmI32.add(retBytes, 8n))
+  UI128(WasmI32.toGrain(retBytes): Bytes)
+}
+
+/**
+ * Copies the code running in current environment to memory.
+ *
+ * @param dest: The destination to write the code to
+ * @param offset: The offset into the code to begin reading from
+ * @param length: The amount of code to read
+ */
+export let codeCopy = (dest: Bytes, offset: Int32, length: Int32) => {
+  Native.codeCopy(WasmI32.add(WasmI32.fromGrain(dest), 8n), Conv.fromInt32(offset), Conv.fromInt32(length))
+}
+
+/**
+ * Gets the size of code running in current environment.
+ *
+ * @returns the size of the code
+ */
+export let getCodeSize = () => {
+  Conv.toInt32(Native.getCodeSize())
+}
+
+/**
+ * Gets the block’s beneficiary address and loads into memory.
+ *
+ * @result the block’s beneficiary address
+ */
+export let getBlockCoinbase = () => {
+  let retBytes = allocateAddressBytes()
+  Native.getBlockCoinbase(WasmI32.add(retBytes, 8n))
+  Address(WasmI32.toGrain(retBytes): Bytes)
+}
+
+/**
+ * Creates a new contract with a given value.
+ *
+ * @param value: The value
+ * @param data: The code for the new contract
+ * @result on success, the new contract's address; on failure, the reason given for failure
+ */
+export let create = (value: UInt128, data: Bytes) => {
+  let retBytes = allocateAddressBytes()
+  let dataPtr = WasmI32.fromGrain(data)
+  let dataSize = WasmI32.load(dataPtr, 4n)
+  let dataPtr = WasmI32.add(dataPtr, 8n)
+  let valuePtr = getUInt128Ptr(value)
+  let resp = Native.create(valuePtr, dataPtr, dataSize, WasmI32.add(retBytes, 8n))
+  if (WasmI32.eqz(resp)) {
+    Ok(WasmI32.toGrain(retBytes): Bytes)
+  } else if (WasmI32.eq(resp, 1n)) {
+    Err(Failure)
+  } else if (WasmI32.eq(resp, 2n)) {
+    Err(Revert)
+  } else {
+    Err(Unknown)
+  }
+}
+
+/**
+ * Get the block’s difficulty.
+ *
+ * @result the block’s difficulty (uint256)
+ */
+let getBlockDifficulty = () => {
+  let ret = allocateUInt256Bytes()
+  Native.getBlockDifficulty(WasmI32.add(ret, 8n))
+  UI256(WasmI32.toGrain(ret): Bytes)
+}
+
+
+/**
+ * Copies the code of an account to memory.
+ *
+ * @param address: The address of the account
+ * @param dest: The destination to write the code to
+ * @param offset: The offset into the code to begin reading from
+ * @param length: The amount of code to read
+ */
+export let externalCodeCopy = (address: AccountAddress, dest: Bytes, offset: Int32, length: Int32) => {
+  Native.externalCodeCopy(getAddressPtr(address), WasmI32.add(WasmI32.fromGrain(dest), 8n), Conv.fromInt32(offset), Conv.fromInt32(length))
+}
+
+/**
+ * Get size of an account’s code.
+ *
+ * @param address: The address of the account
+ * @returns The size of the code
+ */
+export let getExternalCodeSize = (address) => {
+  Conv.toInt32(Native.getExternalCodeSize(getAddressPtr(address)))
+}
+
+/**
+ * Returns the current gasCounter
+ *
+ * @returns the current gasCounter
+ */
+export let getGasLeft = () => Conv.toInt64(Native.getGasLeft())
+
+/**
+ * Get the block’s gas limit.
+ *
+ * @returns the block’s gas limit
+ */
+export let getBlockGasLimit = () => Conv.toInt64(Native.getBlockGasLimit())
+
+/**
+ * Gets price of gas in current environment.
+ *
+ * @returns the price of gas in current environment
+ */
+export let getTxGasPrice = () => {
+  let ret = allocateUInt128Bytes()
+  Native.getTxGasPrice(WasmI32.add(ret, 8n))
+  UI128(WasmI32.toGrain(ret): Bytes)
+}
+
+export let log = (data: Bytes, numberOfTopics: Int32, topic1: Bytes, topic2: Bytes, topic3: Bytes, topic4: Bytes) => {
+  (fail("NYI: log")) : Void
+}
+
+/**
+ * Get the block’s number.
+ *
+ * @returns the block’s number
+ */
+export let getBlockNumber = () => Conv.toInt64(Native.getBlockNumber())
+
+/**
+ * Gets the execution's origination address.
+ * This is the sender of original transaction;
+ * it is never an account with non-empty associated code.
+ *
+ * @returns the execution's origination address
+ */
+export let getTxOrigin = () => {
+  let ret = allocateUInt128Bytes()
+  Native.getTxOrigin(WasmI32.add(ret, 8n))
+  UI128(WasmI32.toGrain(ret): Bytes)
+}
+
+/**
+ * Set the returning output data for the execution.
+ * This will halt the execution immediately.
+ */
+export let finish = (data: Bytes) => {
+  let dataPtr = WasmI32.fromGrain(data)
+  let dataSize = WasmI32.load(dataPtr, 4n)
+  let dataPtr = WasmI32.add(dataPtr, 8n)
+  Native.finish(dataPtr, dataSize)
+}
+
+/**
+ * Set the returning output data for the execution.
+ * This will halt the execution immediately and set the execution result to "reverted".
+ */
+export let revert = (data: Bytes) => {
+  let dataPtr = WasmI32.fromGrain(data)
+  let dataSize = WasmI32.load(dataPtr, 4n)
+  let dataPtr = WasmI32.add(dataPtr, 8n)
+  Native.revert(dataPtr, dataSize)
+}
+
+/**
+ * Get size of current return data buffer to memory.
+ * This contains the return data from the last executed
+ * `call`, `callCode`, `callDelegate`, `callStatic` or `create`.
+ *
+ * Note: `create` only fills the return data buffer in case of a failure.
+ *
+ * @returns the size of current return data buffer
+ */
+export let getReturnDataSize = () => Conv.toInt32(Native.getReturnDataSize())
+
+/**
+ * Copies the current return data buffer to memory. This
+ * contains the return data from last executed
+ * `call`, `callCode`, `callDelegate`, `callStatic` or `create`.
+ *
+ * Note: `create` only fills the return data buffer in case of a failure.
+ *
+ * @param dest: The destination to write the input data to
+ * @param offset: The offset into the input data to begin reading from
+ * @param length: The amount of data to read
+ */
+export let returnDataCopy = (dest: Bytes, offset: Int32, length: Int32) => {
+  Native.returnDataCopy(WasmI32.add(WasmI32.fromGrain(dest), 8n), Conv.fromInt32(offset), Conv.fromInt32(length))
+}
+
+/**
+ * Mark account for later deletion and give the remaining balance to
+ * the specified beneficiary address. This will cause a trap and the
+ * execution will be aborted immediately.
+ */
+export let selfDestruct = (address: AccountAddress) => {
+  Native.selfDestruct(getAddressPtr(address))
+}
+
+/**
+ * Get the block’s timestamp.
+ *
+ * @returns the block’s timestamp
+ */
+export let getBlockTimestamp = () => Conv.toInt64(Native.getBlockTimestamp())

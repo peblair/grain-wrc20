@@ -1,0 +1,62 @@
+// xx
+/* grainc-flags --no-start --main-name main --no-table-size */
+import Ethereum from "../lib/ethereum/ewasm"
+import Bytes from "bytes"
+import Int32 from "int32"
+import Utils from "./utils"
+
+
+let getAddressKey = (address: Ethereum.AccountAddress) => {
+  Utils.leftPadBytes(Ethereum.getAddressBytes(address), 20)
+}
+
+let getAccountBalance = (address: Ethereum.AccountAddress) => {
+  Ethereum.makeUInt256(Ethereum.storageLoad(getAddressKey(address)))
+}
+
+let setAccountBalance = (address: Ethereum.AccountAddress, value: Ethereum.UInt256) => {
+  Ethereum.storageStore(getAddressKey(address), Ethereum.getUInt256Bytes(value))
+}
+
+let doTransfer = () => {
+  if (Ethereum.getCallDataSize() != 32l) {
+    Ethereum.revert(Bytes.empty)
+  }
+  let sender = Ethereum.getCaller()
+  let recipient = Ethereum.getCallDataAddress(4l)
+  let value = Utils.promoteInt64ToInt256(Ethereum.getCallDataInt64(24l))
+  let mut senderBalance = getAccountBalance(sender)
+  let mut recipientBalance = getAccountBalance(recipient)
+  if (Utils.int256Lt(senderBalance, value)) {
+    Ethereum.revert(Bytes.empty)
+  }
+  let (+) = Utils.int256Add
+  let (-) = Utils.int256Sub
+  senderBalance -= value
+  recipientBalance += value
+  setAccountBalance(sender, senderBalance)
+  setAccountBalance(recipient, recipientBalance)
+}
+
+let doBalance = () => {
+  if (Ethereum.getCallDataSize() != 24l) {
+    Ethereum.revert(Bytes.empty)
+  }
+  let address = Ethereum.getCallDataAddress(4l)
+  let balance = getAccountBalance(address)
+  Ethereum.finish(Ethereum.getUInt256Bytes(balance))
+}
+
+
+// main:
+if (Int32.toNumber(Ethereum.getCallDataSize()) < 24) {
+  Ethereum.revert(Bytes.empty)
+}
+let selector = Ethereum.getCallDataInt32(0l)
+if (selector == 0x9993021al) {
+  doBalance()
+} else if (selector == 0x5d359fbdl) {
+  doTransfer()
+} else {
+  Ethereum.revert(Bytes.empty)
+}
