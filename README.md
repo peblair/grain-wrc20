@@ -6,7 +6,7 @@ This repository contains a [WRC20](https://github.com/ewasm/wrc20-examples) (Ewa
 ## Building
 This project assumes that the Grain compiler is installed on your system. To build:
 ```bash
-$ grain src/wrc20.gr
+$ grain --no-gc src/wrc20.gr
 ```
 
 ## Testing
